@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\adaga\\\\OneDrive\\\\Desktop\\\\MT5\" -Recurse -Force)",
+      "Bash(Select-Object FullName)",
+      "Bash(mkdir -p \"C:\\\\Users\\\\adaga\\\\.claude\\\\projects\\\\C--Users-adaga-OneDrive-Desktop-MT5\\\\memory\")"
+    ]
+  }
+}

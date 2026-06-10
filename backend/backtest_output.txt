@@ -1,0 +1,30 @@
+Loading cached history for XAUUSD...
+Replaying strategy over history (this can take several minutes)...
+
+============================================================
+BACKTEST REPORT
+============================================================
+Orders placed : 328   (filled 328, cancelled 0)
+Fill rate     : 100%
+Win rate      : 25%   (328 closed trades)
+Total         : -25.4R   (~$-2,540 at $100/trade)
+Expectancy    : -0.077R per trade
+Profit factor : 0.9
+Avg win/loss  : +2.82R / -1.06R
+Max drawdown  : -52.38R
+
+BY SETUP TAG:
+  bucket           trades   win%   totalR    avgR
+  PDL                  16    38%     9.86   0.616  (low n)
+  PSH                 137    23%     -3.2  -0.023
+  H1_swing             96    32%    -3.65  -0.038
+  PDH                  10    10%    -5.08  -0.508  (low n)
+  PSL                  69    19%   -23.31  -0.338
+
+BY DIRECTION:
+  bucket           trades   win%   totalR    avgR
+  BUY                 126    29%    -6.46  -0.051
+  SELL                202    23%   -18.94  -0.094
+============================================================
+
+328 trades written to C:\Users\adaga\OneDrive\Desktop\MT5\backend\backtest\data\XAUUSD_trades.csv
