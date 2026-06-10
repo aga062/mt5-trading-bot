@@ -100,6 +100,12 @@ class VPSClient:
     def send_market_data(self, **kwargs) -> dict:
         return self._request("POST", "/api/bridge/market-data", kwargs)
 
+    def send_candles(self, **kwargs) -> dict:
+        return self._request("POST", "/api/bridge/candles", kwargs)
+
+    def send_signal(self, **kwargs) -> dict:
+        return self._request("POST", "/api/bridge/signal", kwargs)
+
 
 class BridgeRunner:
     def __init__(self):
@@ -121,8 +127,21 @@ class BridgeRunner:
         # Lazy-import strategy modules only when needed
         from strategies.trading_loop import start_trading, stop_trading, is_trading_active, trading_loop
         from mt5.connector import is_connected as mt5_is_connected, get_account_info
-        from mt5.data_streamer import get_open_positions, get_current_tick
+        from mt5.data_streamer import get_open_positions, get_current_tick, get_candles
         from ai.daily_bias import analyze_daily_bias
+        from strategies.entry_confirmation import evaluate_entry
+        import MetaTrader5 as mt5
+
+        # Try to initialize MT5 connection
+        mt5_ready = False
+        try:
+            if mt5.initialize():
+                mt5_ready = True
+                logger.info("MetaTrader 5 initialized successfully")
+            else:
+                logger.warning("MetaTrader 5 not initialized. Please open MT5 and login.")
+        except Exception as e:
+            logger.warning(f"MetaTrader 5 initialization failed: {e}")
 
         while self._running:
             try:
@@ -178,8 +197,8 @@ class BridgeRunner:
                         )
                     last_account_update = now
 
-                # Send market data to VPS for dashboard
-                if now - last_market_update > 3:
+                # Send market data to VPS for dashboard (only if MT5 is ready)
+                if mt5_ready and now - last_market_update > 3:
                     for sym in symbols:
                         tick = get_current_tick(sym)
                         if tick:
@@ -187,6 +206,30 @@ class BridgeRunner:
                                 symbol=sym,
                                 tick=tick,
                             )
+                        # Push candle data for chart
+                        for tf in ["H1", "M5", "M15", "M30", "H4", "D1"]:
+                            df = get_candles(sym, tf, 200)
+                            if df is not None:
+                                records = df.to_dict(orient="records")
+                                for r in records:
+                                    r["datetime"] = str(r["datetime"])
+                                    for k, v in r.items():
+                                        if hasattr(v, 'item'):
+                                            r[k] = v.item()
+                                self.vps.send_candles(
+                                    symbol=sym,
+                                    timeframe=tf,
+                                    candles=records,
+                                )
+                        # Push signal for scanner
+                        try:
+                            sig = evaluate_entry(sym)
+                            self.vps.send_signal(
+                                symbol=sym,
+                                signal=sig.to_dict(),
+                            )
+                        except Exception:
+                            pass
                     last_market_update = now
 
             except Exception as e:

@@ -289,6 +289,20 @@ def api_candles(
     count: int = 100,
     user=Depends(get_current_user)
 ):
+    user_id = user["id"]
+    from config import BRIDGE_MODE
+    if BRIDGE_MODE:
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT value FROM user_settings WHERE user_id = ? AND key = ?",
+                (user_id, f"bridge_candles_{symbol}_{timeframe}"),
+            ).fetchone()
+            if row and row["value"]:
+                try:
+                    return json.loads(row["value"])
+                except Exception:
+                    pass
+        raise HTTPException(status_code=404, detail="Candle data unavailable (PC bridge not sending data)")
     df = get_candles(symbol, timeframe, count)
     if df is None:
         raise HTTPException(status_code=404, detail="Candle data unavailable")
@@ -366,6 +380,33 @@ def api_zones(
 
 @app.get("/api/ai/signal")
 def api_signal(symbol: str = DEFAULT_SYMBOL, user=Depends(get_current_user)):
+    user_id = user["id"]
+    from config import BRIDGE_MODE
+    if BRIDGE_MODE:
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT value FROM user_settings WHERE user_id = ? AND key = ?",
+                (user_id, f"bridge_signal_{symbol}"),
+            ).fetchone()
+            if row and row["value"]:
+                try:
+                    return json.loads(row["value"])
+                except Exception:
+                    pass
+        # Return a default waiting signal if no bridge data yet
+        return {
+            "symbol": symbol,
+            "action": "WAIT",
+            "confidence": 0,
+            "setup": "No signal from PC bridge yet",
+            "entry_price": None,
+            "stop_loss": None,
+            "take_profit": None,
+            "h1_bias": None,
+            "m5_zone": None,
+            "spread_ok": True,
+            "news_clear": True,
+        }
     signal = evaluate_entry(symbol)
     return signal.to_dict()
 

@@ -181,3 +181,40 @@ async def bridge_market_data(payload: MarketDataPayload, user=Depends(get_curren
             (user_id, "bridge_h1_bias", payload.h1_bias or ""),
         )
     return {"status": "ok"}
+
+
+class CandlesPayload(BaseModel):
+    symbol: str
+    timeframe: str
+    candles: list[dict]
+
+
+@router.post("/candles")
+async def bridge_candles(payload: CandlesPayload, user=Depends(get_current_user)):
+    if not BRIDGE_MODE:
+        raise HTTPException(status_code=403, detail="Bridge mode not enabled")
+    user_id = user["id"]
+    with get_db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO user_settings (user_id, key, value) VALUES (?, ?, ?)",
+            (user_id, f"bridge_candles_{payload.symbol}_{payload.timeframe}", json.dumps(payload.candles)),
+        )
+    return {"status": "ok"}
+
+
+class SignalPayload(BaseModel):
+    symbol: str
+    signal: dict
+
+
+@router.post("/signal")
+async def bridge_signal(payload: SignalPayload, user=Depends(get_current_user)):
+    if not BRIDGE_MODE:
+        raise HTTPException(status_code=403, detail="Bridge mode not enabled")
+    user_id = user["id"]
+    with get_db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO user_settings (user_id, key, value) VALUES (?, ?, ?)",
+            (user_id, f"bridge_signal_{payload.symbol}", json.dumps(payload.signal)),
+        )
+    return {"status": "ok"}
