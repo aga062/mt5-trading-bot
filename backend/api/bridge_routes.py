@@ -148,3 +148,36 @@ async def bridge_positions(payload: PositionsPayload, user=Depends(get_current_u
             (user_id, "bridge_positions", json.dumps(payload.positions)),
         )
     return {"status": "ok"}
+
+
+class MarketDataPayload(BaseModel):
+    symbol: str
+    tick: Optional[dict] = None
+    scanner_status: Optional[str] = None
+    direction: Optional[str] = None
+    h1_bias: Optional[str] = None
+
+
+@router.post("/market-data")
+async def bridge_market_data(payload: MarketDataPayload, user=Depends(get_current_user)):
+    if not BRIDGE_MODE:
+        raise HTTPException(status_code=403, detail="Bridge mode not enabled")
+    user_id = user["id"]
+    with get_db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO user_settings (user_id, key, value) VALUES (?, ?, ?)",
+            (user_id, f"bridge_tick_{payload.symbol}", json.dumps(payload.tick) if payload.tick else ""),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO user_settings (user_id, key, value) VALUES (?, ?, ?)",
+            (user_id, "bridge_scanner_status", payload.scanner_status or ""),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO user_settings (user_id, key, value) VALUES (?, ?, ?)",
+            (user_id, "bridge_direction", payload.direction or ""),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO user_settings (user_id, key, value) VALUES (?, ?, ?)",
+            (user_id, "bridge_h1_bias", payload.h1_bias or ""),
+        )
+    return {"status": "ok"}

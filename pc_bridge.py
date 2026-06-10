@@ -97,6 +97,9 @@ class VPSClient:
     def update_account(self, **kwargs) -> dict:
         return self._request("POST", "/api/bridge/account", kwargs)
 
+    def send_market_data(self, **kwargs) -> dict:
+        return self._request("POST", "/api/bridge/market-data", kwargs)
+
 
 class BridgeRunner:
     def __init__(self):
@@ -113,11 +116,13 @@ class BridgeRunner:
         self._running = True
         last_heartbeat = 0
         last_account_update = 0
+        last_market_update = 0
 
         # Lazy-import strategy modules only when needed
         from strategies.trading_loop import start_trading, stop_trading, is_trading_active, trading_loop
         from mt5.connector import is_connected as mt5_is_connected, get_account_info
-        from mt5.data_streamer import get_open_positions
+        from mt5.data_streamer import get_open_positions, get_current_tick
+        from ai.daily_bias import analyze_daily_bias
 
         while self._running:
             try:
@@ -172,6 +177,17 @@ class BridgeRunner:
                             profit=account.get("profit", 0),
                         )
                     last_account_update = now
+
+                # Send market data to VPS for dashboard
+                if now - last_market_update > 3:
+                    for sym in symbols:
+                        tick = get_current_tick(sym)
+                        if tick:
+                            self.vps.send_market_data(
+                                symbol=sym,
+                                tick=tick,
+                            )
+                    last_market_update = now
 
             except Exception as e:
                 logger.error(f"Bridge loop error: {e}")

@@ -145,30 +145,95 @@ def api_admin_delete_user(user_id: int, admin=Depends(get_current_admin)):
     return admin_delete_user(user_id)
 
 
+def _get_bridge_pc_connected(user_id: int) -> bool:
+    pc_connected = False
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT value FROM user_settings WHERE user_id = ? AND key = ?",
+            (user_id, "bridge_pc_connected"),
+        ).fetchone()
+        pc_connected = row["value"] == "true" if row else False
+        if pc_connected:
+            row = conn.execute(
+                "SELECT value FROM user_settings WHERE user_id = ? AND key = ?",
+                (user_id, "bridge_last_heartbeat"),
+            ).fetchone()
+            if row:
+                try:
+                    beat_time = datetime.fromisoformat(row["value"].replace("Z", "+00:00"))
+                    pc_connected = (datetime.now(timezone.utc) - beat_time).total_seconds() < 60
+                except Exception:
+                    pc_connected = False
+    return pc_connected
+
+
 # ============================================================
 # MT5 CONNECTION ROUTES
 # ============================================================
 
 @app.post("/api/mt5/connect", response_model=MT5ConnectionStatus)
 def api_mt5_connect(creds: MT5Credentials, user=Depends(get_current_user)):
-    return connect_mt5(user["id"], creds)
+    user_id = user["id"]
+    from config import BRIDGE_MODE
+    if BRIDGE_MODE:
+        pc_connected = _get_bridge_pc_connected(user_id)
+        if not pc_connected:
+            return {
+                "connected": False,
+                "error": "PC bridge is not connected. Please run pc_bridge.py on your Windows PC.",
+            }
+        return {"connected": True, "error": None}
+    return connect_mt5(user_id, creds)
 
 
 @app.post("/api/mt5/disconnect")
 def api_mt5_disconnect(user=Depends(get_current_user)):
-    disconnect_mt5(user["id"])
+    user_id = user["id"]
+    from config import BRIDGE_MODE
+    if BRIDGE_MODE:
+        with get_db() as conn:
+            conn.execute(
+                "DELETE FROM user_settings WHERE user_id = ? AND key IN (?, ?)",
+                (user_id, "bridge_pc_connected", "bridge_last_heartbeat"),
+            )
+        return {"status": "disconnected"}
+    disconnect_mt5(user_id)
     return {"status": "disconnected"}
 
 
 @app.get("/api/mt5/status")
 def api_mt5_status(user=Depends(get_current_user)):
-    connected = is_connected(user["id"])
+    user_id = user["id"]
+    from config import BRIDGE_MODE
+    if BRIDGE_MODE:
+        pc_connected = _get_bridge_pc_connected(user_id)
+        bridge_account = None
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT value FROM user_settings WHERE user_id = ? AND key = ?",
+                (user_id, "bridge_account"),
+            ).fetchone()
+            if row:
+                try:
+                    bridge_account = json.loads(row["value"])
+                except Exception:
+                    pass
+        return {
+            "connected": pc_connected,
+            "account": bridge_account,
+            "trading_active": is_trading_active(user_id),
+            "losses_today": count_todays_losses(user_id),
+            "daily_loss_limit": DAILY_LOSS_LIMIT,
+            "halted": count_todays_losses(user_id) >= DAILY_LOSS_LIMIT,
+            "mode": "bridge",
+        }
+    connected = is_connected(user_id)
     account = get_account_info() if connected else None
-    losses_today = count_todays_losses(user["id"])
+    losses_today = count_todays_losses(user_id)
     return {
         "connected": connected,
         "account": account,
-        "trading_active": is_trading_active(user["id"]),
+        "trading_active": is_trading_active(user_id),
         "losses_today": losses_today,
         "daily_loss_limit": DAILY_LOSS_LIMIT,
         "halted": losses_today >= DAILY_LOSS_LIMIT,
@@ -177,7 +242,17 @@ def api_mt5_status(user=Depends(get_current_user)):
 
 @app.post("/api/mt5/reconnect", response_model=MT5ConnectionStatus)
 def api_mt5_reconnect(user=Depends(get_current_user)):
-    return reconnect_mt5(user["id"])
+    user_id = user["id"]
+    from config import BRIDGE_MODE
+    if BRIDGE_MODE:
+        pc_connected = _get_bridge_pc_connected(user_id)
+        if not pc_connected:
+            return {
+                "connected": False,
+                "error": "PC bridge is not connected. Please run pc_bridge.py on your Windows PC.",
+            }
+        return {"connected": True, "error": None}
+    return reconnect_mt5(user_id)
 
 
 # ============================================================
@@ -186,6 +261,21 @@ def api_mt5_reconnect(user=Depends(get_current_user)):
 
 @app.get("/api/market/tick")
 def api_tick(symbol: str = DEFAULT_SYMBOL, user=Depends(get_current_user)):
+    user_id = user["id"]
+    from config import BRIDGE_MODE
+    if BRIDGE_MODE:
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT value FROM user_settings WHERE user_id = ? AND key = ?",
+                (user_id, f"bridge_tick_{symbol}"),
+            ).fetchone()
+            if row and row["value"]:
+                try:
+                    import json
+                    return json.loads(row["value"])
+                except Exception:
+                    pass
+        raise HTTPException(status_code=404, detail="Tick data unavailable (PC bridge not sending data)")
     tick = get_current_tick(symbol)
     if tick is None:
         raise HTTPException(status_code=404, detail="Tick data unavailable")
