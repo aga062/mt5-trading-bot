@@ -3,6 +3,9 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 
+# Bridge mode: when True, VPS skips local MT5 loop and waits for PC bridge
+BRIDGE_MODE = os.getenv("BRIDGE_MODE", "false").lower() == "true"
+
 # Database
 DATABASE_URL = os.getenv("DATABASE_URL", str(BASE_DIR / "trading.db"))
 

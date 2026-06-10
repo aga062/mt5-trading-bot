@@ -37,6 +37,7 @@ from strategies.trading_loop import (
 from risk.risk_manager import count_todays_losses
 from websocket.ws_manager import ws_manager
 from news.news_filter import is_news_blackout, get_upcoming_events
+from api.bridge_routes import router as bridge_router
 
 # --- Logging Setup ---
 logging.basicConfig(
@@ -81,6 +82,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(bridge_router, prefix="/api/bridge")
 
 
 # ============================================================
@@ -289,6 +292,33 @@ class TradingControlRequest(BaseModel):
 @app.post("/api/trading/start")
 async def api_start_trading(req: TradingControlRequest, user=Depends(get_current_user)):
     user_id = user["id"]
+    from config import BRIDGE_MODE, DEFAULT_SYMBOLS
+
+    if BRIDGE_MODE:
+        if is_trading_active(user_id):
+            raise HTTPException(status_code=400, detail="Trading already active")
+        symbols = req.symbols or DEFAULT_SYMBOLS
+        start_trading(user_id, symbols, manual_lot=req.manual_lot)
+        with get_db() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO user_settings (user_id, key, value) VALUES (?, ?, ?)",
+                (user_id, "bridge_trading_enabled", "true"),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO user_settings (user_id, key, value) VALUES (?, ?, ?)",
+                (user_id, "bridge_symbols", json.dumps(symbols)),
+            )
+            if req.manual_lot is not None:
+                conn.execute(
+                    "INSERT OR REPLACE INTO user_settings (user_id, key, value) VALUES (?, ?, ?)",
+                    (user_id, "bridge_manual_lot", str(req.manual_lot)),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM user_settings WHERE user_id = ? AND key = ?",
+                    (user_id, "bridge_manual_lot"),
+                )
+        return {"status": "trading_started", "symbols": symbols, "manual_lot": req.manual_lot, "mode": "bridge"}
 
     if not is_connected(user_id):
         raise HTTPException(status_code=400, detail="MT5 not connected")
@@ -296,7 +326,6 @@ async def api_start_trading(req: TradingControlRequest, user=Depends(get_current
     if is_trading_active(user_id):
         raise HTTPException(status_code=400, detail="Trading already active")
 
-    from config import DEFAULT_SYMBOLS
     symbols = req.symbols or DEFAULT_SYMBOLS
     start_trading(user_id, symbols, manual_lot=req.manual_lot)
 
@@ -309,7 +338,16 @@ async def api_start_trading(req: TradingControlRequest, user=Depends(get_current
 @app.post("/api/trading/stop")
 async def api_stop_trading(user=Depends(get_current_user)):
     user_id = user["id"]
+    from config import BRIDGE_MODE
     stop_trading(user_id)
+
+    if BRIDGE_MODE:
+        with get_db() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO user_settings (user_id, key, value) VALUES (?, ?, ?)",
+                (user_id, "bridge_trading_enabled", "false"),
+            )
+        return {"status": "trading_stopped", "mode": "bridge"}
 
     task = _background_tasks.pop(user_id, None)
     if task:
@@ -321,6 +359,32 @@ async def api_stop_trading(user=Depends(get_current_user)):
 @app.get("/api/trading/status")
 def api_trading_status(user=Depends(get_current_user)):
     user_id = user["id"]
+    from config import BRIDGE_MODE
+
+    if BRIDGE_MODE:
+        pc_connected = False
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT value FROM user_settings WHERE user_id = ? AND key = ?",
+                (user_id, "bridge_pc_connected"),
+            ).fetchone()
+            pc_connected = row["value"] == "true" if row else False
+            row = conn.execute(
+                "SELECT value FROM user_settings WHERE user_id = ? AND key = ?",
+                (user_id, "bridge_last_heartbeat"),
+            ).fetchone()
+            if row and pc_connected:
+                try:
+                    beat_time = datetime.fromisoformat(row["value"].replace("Z", "+00:00"))
+                    pc_connected = (datetime.now(timezone.utc) - beat_time).total_seconds() < 60
+                except Exception:
+                    pc_connected = False
+        return {
+            "active": is_trading_active(user_id),
+            "connected": pc_connected,
+            "mode": "bridge",
+        }
+
     return {
         "active": is_trading_active(user_id),
         "connected": is_connected(user_id),
